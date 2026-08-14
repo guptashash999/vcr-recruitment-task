@@ -1,0 +1,58 @@
+"""
+prompts.py (v3 -- High Accuracy & Strict Formatting)
+"""
+import re
+
+LETTERS = ["A", "B", "C", "D"]
+
+def build_qa_prompt(question, answers):
+    options = "\n".join(f"{LETTERS[i]}) {a}" for i, a in enumerate(answers))
+    return (
+        "You are an expert at Visual Commonsense Reasoning. "
+        "The image has labeled people/objects in colored boxes (e.g., [person0]). "
+        "Match the text to the visual boxes.\n\n"
+        f"Question: {question}\n\n"
+        f"Options:\n{options}\n\n"
+        "Analyze the visual evidence, human intent, and social context in 1-2 sentences. "
+        "Then, output the correct letter on the final line.\n"
+        "Format:\nReasoning: <your brief reasoning>\nAnswer: <single letter A, B, C, or D>"
+    )
+
+def build_qar_prompt(question, chosen_answer, rationales):
+    options = "\n".join(f"{LETTERS[i]}) {r}" for i, r in enumerate(rationales))
+    return (
+        "You are an expert at explaining WHY a visual commonsense answer is correct.\n\n"
+        f"Question: {question}\n"
+        f"Chosen answer: {chosen_answer}\n\n"
+        f"Rationale options:\n{options}\n\n"
+        "Select the rationale that best logically explains the chosen answer based on the image. "
+        "Do not rewrite the options. Output the correct letter on the final line.\n"
+        "Format:\nReasoning: <your brief reasoning>\nAnswer: <single letter A, B, C, or D>"
+    )
+
+def parse_letter(model_output):
+    """
+    Bulletproof parser. Looks for 'Answer: X', then 'answer is X', 
+    then falls back to the very last standalone A, B, C, or D.
+    """
+    if not model_output:
+        return None
+        
+    text = model_output.strip().upper()
+    
+    # Look for "Answer: X"
+    m = re.search(r"ANSWER:\s*([ABCD])", text)
+    if m:
+        return m.group(1)
+        
+    # Look for "answer is X"
+    m = re.search(r"ANSWER IS\s*([ABCD])", text)
+    if m:
+        return m.group(1)
+        
+    # Fallback: Find the very last standalone letter A, B, C, or D
+    matches = re.findall(r"\b([ABCD])\b", text)
+    if matches:
+        return matches[-1]
+        
+    return None

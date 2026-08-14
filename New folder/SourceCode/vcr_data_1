@@ -1,0 +1,94 @@
+"""
+vcr_data.py  (v4 -- Using pre-parsed text fields)
+----------------------------------------------------
+Loads VCR directly from https://huggingface.co/datasets/Rowan/vcr with
+streaming=True. 
+"""
+
+import itertools
+import re
+from datasets import load_dataset
+from PIL import ImageDraw
+
+BOX_COLORS = [
+    "#e6194b", "#3cb44b", "#4363d8", "#f58231",
+    "#911eb4", "#42d4f4", "#f032e6", "#bfef45",
+]
+
+# FIXED: Using the pre-parsed _text fields provided by Hugging Face
+ANNOTATION_KEYS = {
+    "question": "question_text",
+    "answers": "answer_choice_texts",
+    "rationales": "rationale_choice_texts",
+    "answer_label": "answer_label",
+    "rationale_label": "rationale_label",
+}
+
+
+def load_vcr_stream(split="validation"):
+    ds = load_dataset("Rowan/vcr", "image_examples", split=split, streaming=True)
+    return iter(ds)
+
+
+def take_n(stream, n):
+    return list(itertools.islice(stream, n))
+
+
+def _get(ann, logical_key):
+    real_key = ANNOTATION_KEYS[logical_key]
+    if real_key not in ann:
+        raise KeyError(
+            f"Expected field '{real_key}' (for '{logical_key}') not found in this "
+            f"annotation. Actual keys present: {list(ann.keys())}. "
+        )
+    return ann[real_key]
+
+
+def replace_objects(text, objects):
+    """
+    Replaces [0], [1] etc. with [person1], [chair2] if they exist in the text.
+    """
+    if not isinstance(text, str):
+        return text
+        
+    def repl(m):
+        idx = int(m.group(1))
+        if idx < len(objects):
+            cls = objects[idx]
+            return f"[{cls}{idx + 1}]"
+        return m.group(0)
+        
+    return re.sub(r"\[(\d+)\]", repl, text)
+
+
+def iter_questions(image_row):
+    objects = image_row["objects"]
+    annotations = image_row.get("annotations") or []
+
+    for ann in annotations:
+        yield {
+            "question": replace_objects(_get(ann, "question"), objects),
+            "answers": [replace_objects(a, objects) for a in _get(ann, "answers")],
+            "rationales": [replace_objects(r, objects) for r in _get(ann, "rationales")],
+            "answer_label": _get(ann, "answer_label"),
+            "rationale_label": _get(ann, "rationale_label"),
+        }
+
+
+def draw_boxes(image, boxes, objects, indices=None):
+    img = image.convert("RGB").copy()
+    if indices is None:
+        indices = range(len(boxes))
+
+    draw = ImageDraw.Draw(img)
+    for idx in indices:
+        if idx >= len(boxes):
+            continue
+        x1, y1, x2, y2 = boxes[idx][:4]
+        color = BOX_COLORS[idx % len(BOX_COLORS)]
+        label = f"{objects[idx] if idx < len(objects) else 'obj'}{idx}"
+        draw.rectangle([x1, y1, x2, y2], outline=color, width=3)
+        text_w = 8 * len(label) + 6
+        draw.rectangle([x1, max(0, y1 - 16), x1 + text_w, y1], fill=color)
+        draw.text((x1 + 3, max(0, y1 - 15)), label, fill="white")
+    return img
